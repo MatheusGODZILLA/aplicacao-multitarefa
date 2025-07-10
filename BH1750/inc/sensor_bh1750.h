@@ -7,8 +7,8 @@
 
 // Configurações do I2C e sensor
 #define I2C_PORT i2c0
-#define I2C_SDA 4
-#define I2C_SCL 5
+#define I2C_SDA 0
+#define I2C_SCL 1
 #define BH1750_ADDR 0x23
 #define BH1750_CMD_START 0x10
 
