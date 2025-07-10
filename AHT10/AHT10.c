@@ -1,28 +1,27 @@
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
-#include <string.h>
-#include "inc/ssd1306.h" 
+#include "inc/ssd1306.h"
+#include "inc/sensor_aht10.h"
 
-#define AHT10_ADDR 0x38
-
-// === Configurações ===
-const uint I2C_SDA = 14;
-const uint I2C_SCL = 15;
-const uint BUZZER_PIN = 21;  // GPIO do buzzer
+#define BUZZER_PIN 21
 #define BUZZER_FREQUENCY 100
+
+const uint OLED_I2C_SDA = 14;
+const uint OLED_I2C_SCL = 15;
 
 struct render_area frame_area;
 
 // === Inicialização do OLED ===
 void setup_oled() {
     i2c_init(i2c1, 400 * 1000);  // 400kHz
-    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(I2C_SDA);
-    gpio_pull_up(I2C_SCL);
+    gpio_set_function(OLED_I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(OLED_I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(OLED_I2C_SDA);
+    gpio_pull_up(OLED_I2C_SCL);
 
     ssd1306_init();
 
@@ -54,37 +53,7 @@ void display_text(char *lines[], uint line_count) {
     render_on_display(ssd, &frame_area);
 }
 
-// === Inicialização do AHT10 ===
-void aht10_init() {
-    uint8_t init_cmd[] = {0xBE, 0x08, 0x00};
-    i2c_write_blocking(i2c1, AHT10_ADDR, init_cmd, 3, false);
-    sleep_ms(20);
-}
-
-// === Leitura do AHT10 ===
-bool aht10_read(float *temperature, float *humidity) {
-    uint8_t trigger[] = {0xAC, 0x33, 0x00};
-    uint8_t raw[6];
-
-    i2c_write_blocking(i2c1, AHT10_ADDR, trigger, 3, false);
-    sleep_ms(80);
-
-    if (i2c_read_blocking(i2c1, AHT10_ADDR, raw, 6, false) != 6) {
-        return false;
-    }
-
-    if ((raw[0] & 0x80) != 0) return false;
-
-    uint32_t hum_raw = ((raw[1] << 12) | (raw[2] << 4) | (raw[3] >> 4));
-    *humidity = (hum_raw * 100.0) / 1048576;
-
-    uint32_t temp_raw = (((raw[3] & 0x0F) << 16) | (raw[4] << 8) | raw[5]);
-    *temperature = (temp_raw * 200.0 / 1048576) - 50;
-
-    return true;
-}
-
-// === Inicializa o buzzer (PWM) ===
+// === Inicializa o buzzer ===
 void pwm_init_buzzer(uint pin) {
     gpio_set_function(pin, GPIO_FUNC_PWM);
     uint slice_num = pwm_gpio_to_slice_num(pin);
@@ -93,19 +62,19 @@ void pwm_init_buzzer(uint pin) {
     pwm_config_set_clkdiv(&config, clock_get_hz(clk_sys) / (BUZZER_FREQUENCY * 4096));
     pwm_init(slice_num, &config, true);
 
-    pwm_set_gpio_level(pin, 0);  // Começa desligado
+    pwm_set_gpio_level(pin, 0);
 }
 
-// === Beep do buzzer ===
+// === Beep ===
 void beep(uint pin, uint duration_ms) {
     uint slice_num = pwm_gpio_to_slice_num(pin);
     pwm_set_gpio_level(pin, 2048);  // 50% duty
     sleep_ms(duration_ms);
-    pwm_set_gpio_level(pin, 0);     // Desliga
-    sleep_ms(100);                  // Pausa
+    pwm_set_gpio_level(pin, 0);
+    sleep_ms(100);
 }
 
-// === Exibir dados e alertar com buzzer ===
+// === Exibir dados e alerta ===
 void mostrar_dados(float temp, float umid) {
     char linha1[32];
     char linha2[32];
@@ -120,28 +89,44 @@ void mostrar_dados(float temp, float umid) {
     if (temp < 20.0 || umid > 70.0) {
         linhas[2] = "!! ALERTA !!";
         display_text(linhas, 3);
-        beep(BUZZER_PIN, 500);  // Bipe por 500ms
+        beep(BUZZER_PIN, 500);
     } else {
         display_text(linhas, 2);
     }
 }
 
-// === Função principal ===
 int main() {
     stdio_init_all();
+    sleep_ms(3000);
+
     setup_oled();
-    aht10_init();
     pwm_init_buzzer(BUZZER_PIN);
+
+    // Inicializa I2C0 para o sensor AHT10 (GPIO 0 e 1)
+    i2c_init(I2C_PORT, 400 * 1000);
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA);
+    gpio_pull_up(I2C_SCL);
+
+    if (!aht10_init()) {
+        char *erro[] = {"Falha init AHT10"};
+        display_text(erro, 1);
+        beep(BUZZER_PIN, 200);
+        return 1;
+    }
 
     float temp, umid;
 
     while (true) {
         if (aht10_read(&temp, &umid)) {
+            printf("Temperatura: %.2f °C | Umidade: %.2f %%\n", temp, umid);
             mostrar_dados(temp, umid);
         } else {
+            printf("Erro na leitura do AHT10\n");
             char *erro[] = {"Erro leitura AHT10"};
             display_text(erro, 1);
-            beep(BUZZER_PIN, 100);  // Aviso de erro
+            beep(BUZZER_PIN, 100);
         }
         sleep_ms(2000);
     }
