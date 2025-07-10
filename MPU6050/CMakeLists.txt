@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(MPU6050 MPU6050.c inc/ssd1306_i2c.c inc/acceleration_sensor.h)
+add_executable(MPU6050 MPU6050.c inc/ssd1306_i2c.c sensor_mpu6050.c)
 
 pico_set_program_name(MPU6050 "MPU6050")
 pico_set_program_version(MPU6050 "0.1")
